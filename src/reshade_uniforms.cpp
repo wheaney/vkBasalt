@@ -40,6 +40,10 @@ namespace vkBasalt
             {
                 uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameTimeUniform(uniform)));
             }
+            else if (source == "averageframetime")
+            {
+                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new AverageFrameTimeUniform(uniform)));
+            }
             else if (source == "framecount")
             {
                 uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameCountUniform(uniform)));
@@ -109,6 +113,34 @@ namespace vkBasalt
         std::memcpy((uint8_t*) mapedBuffer + offset, &(frametime), sizeof(float));
     }
     FrameTimeUniform::~FrameTimeUniform()
+    {
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    AverageFrameTimeUniform::AverageFrameTimeUniform(reshadefx::uniform_info uniformInfo)
+    {
+        auto source = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; });
+        if (source->value.string_data != "averageframetime")
+        {
+            Logger::err("Tried to create a AverageFrameTimeUniform from a non averageframetime uniform_info");
+        }
+        frametimes.push(std::chrono::high_resolution_clock::now());
+        offset    = uniformInfo.offset;
+        size      = uniformInfo.size;
+    }
+    void AverageFrameTimeUniform::update(void* mapedBuffer)
+    {
+        auto currentFrame = std::chrono::high_resolution_clock::now();
+        frametimes.push(currentFrame);
+        std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame = frametimes.front();
+        if (frametimes.size() > 100) {
+            frametimes.pop();
+        }
+        std::chrono::duration<float, std::milli> duration     = currentFrame - lastFrame;
+        float frametime                                       = duration.count() / frametimes.size();
+        std::memcpy((uint8_t*) mapedBuffer + offset, &(frametime), sizeof(float));
+    }
+    AverageFrameTimeUniform::~AverageFrameTimeUniform()
     {
     }
 
@@ -418,6 +450,7 @@ namespace vkBasalt
             projId = projIdAnnotation->value.as_int[0];
         }
         shmKey = ftok(pathname, projId);
+        Logger::debug("Got key " + std::to_string(shmKey) + " for path " + pathname + "\n");
 
         if (auto defaultValueAnnotation =
                 std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "defaultValue"; });
@@ -450,8 +483,11 @@ namespace vkBasalt
     void RuntimeUniform::update(void* mapedBuffer)
     {
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> value;
+        bool shmError = false;
         if (shmKey != -1) {
-            int shmId = shmget(shmKey,size,0444); // read-only
+            // since booleans are backed by a uin32_t type in the shader buffer, we can't rely on the uniform_info.size
+            // attribute when reading from shared memory
+            int shmId = shmget(shmKey,type.is_boolean() ? sizeof(bool) : size,0444); // read-only
             if (shmId != -1) {
                 if (type.is_floating_point()) {
                     float* raw_ptr = static_cast<float*>(shmat(shmId, nullptr, 0));
@@ -477,9 +513,20 @@ namespace vkBasalt
                         value = std::vector<uint32_t>(raw_ptr, raw_ptr + type.components());
                         shmdt(raw_ptr);
                     }
+                } else {
+                    Logger::debug(std::string("Unsupported type for uniform: ") + pathname + " " + std::to_string(projId) + "\n");
                 }
+            } else {
+                shmError = true;
             }
+        } else {
+            shmError = true;
         }
+
+        // try refreshing the key
+        if (shmError)
+            shmKey = ftok(pathname, projId);
+
         if (std::holds_alternative<std::monostate>(value)) {
             value = defaultValue;
         }

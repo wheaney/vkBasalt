@@ -8,6 +8,7 @@
 #include <chrono>
 #include <memory>
 #include <variant>
+#include <queue>
 
 #include "vulkan_include.hpp"
 
@@ -39,6 +40,17 @@ namespace vkBasalt
 
     private:
         std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame;
+    };
+
+    class AverageFrameTimeUniform : public ReshadeUniform
+    {
+    public:
+        AverageFrameTimeUniform(reshadefx::uniform_info uniformInfo);
+        void virtual update(void* mapedBuffer) override;
+        virtual ~AverageFrameTimeUniform();
+
+    private:
+        std::queue<std::chrono::time_point<std::chrono::high_resolution_clock>> frametimes;
     };
 
     class FrameCountUniform : public ReshadeUniform
