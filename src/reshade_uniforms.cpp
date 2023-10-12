@@ -427,6 +427,8 @@ namespace vkBasalt
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
         type   = uniformInfo.type;
+
+        char* pathname;
         auto source = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; });
         if (auto pathnameAnnotation =
                 std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "pathname"; });
@@ -442,15 +444,26 @@ namespace vkBasalt
             strcpy(pathname, tmp_pathname.c_str());
         }
 
-        projId = 0;
+        int projId = 0;
         if (auto projIdAnnotation =
                 std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "projId"; });
             projIdAnnotation != uniformInfo.annotations.end())
         {
             projId = projIdAnnotation->value.as_int[0];
         }
-        shmKey = ftok(pathname, projId);
-        Logger::debug("Got key " + std::to_string(shmKey) + " for path " + pathname + "\n");
+        key_t shmKey = ftok(pathname, projId);
+        int shmId = shmget(shmKey,type.is_boolean() ? sizeof(bool) : size, 0444|IPC_CREAT);
+        shmValue = NULL;
+        if (shmId != -1) {
+            shmValue = shmat(shmId, nullptr, 0);
+            if (shmValue == (void *) -1) {
+                Logger::debug(std::string("Error with shmat for path ") + pathname + "\n");
+            } else {
+                Logger::debug("Got key " + std::to_string(shmKey) + " for path " + pathname + "\n");
+            }
+        } else {
+            Logger::debug(std::string("Error with shmget for path ") + pathname + "\n");
+        }
 
         if (auto defaultValueAnnotation =
                 std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "defaultValue"; });
@@ -483,53 +496,33 @@ namespace vkBasalt
     void RuntimeUniform::update(void* mapedBuffer)
     {
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> value;
-        bool shmError = false;
-        if (shmKey != -1) {
-            // since booleans are backed by a uin32_t type in the shader buffer, we can't rely on the uniform_info.size
-            // attribute when reading from shared memory
-            int shmId = shmget(shmKey,type.is_boolean() ? sizeof(bool) : size,0444); // read-only
-            if (shmId != -1) {
-                if (type.is_floating_point()) {
-                    float* raw_ptr = static_cast<float*>(shmat(shmId, nullptr, 0));
-                    value = std::vector<float>(raw_ptr, raw_ptr + type.components());
-                    shmdt(raw_ptr);
-                } else if (type.is_boolean()) {
-                    bool* raw_ptr = static_cast<bool*>(shmat(shmId, nullptr, 0));
-
-                    // convert to a uint32_t vector, that's how the reshade uniform code understands booleans
-                    std::vector<uint32_t> bools_as_uint;
-                    for(size_t i = 0; i < type.components(); ++i) {
-                        bools_as_uint.push_back(static_cast<uint32_t>(raw_ptr[i]));
-                    }
-                    value = bools_as_uint;
-                    shmdt(raw_ptr);
-                } else if (type.is_numeric()) {
-                    if (type.is_signed()) {
-                        int32_t* raw_ptr = static_cast<int32_t*>(shmat(shmId, nullptr, 0));
-                        value = std::vector<int32_t>(raw_ptr, raw_ptr + type.components());
-                        shmdt(raw_ptr);
-                    } else {
-                        uint32_t* raw_ptr = static_cast<uint32_t*>(shmat(shmId, nullptr, 0));
-                        value = std::vector<uint32_t>(raw_ptr, raw_ptr + type.components());
-                        shmdt(raw_ptr);
-                    }
-                } else {
-                    Logger::debug(std::string("Unsupported type for uniform: ") + pathname + " " + std::to_string(projId) + "\n");
+        if (shmValue != NULL && shmValue != (void *) -1) {
+            if (type.is_floating_point()) {
+                float* raw_ptr = static_cast<float*>(shmValue);
+                value = std::vector<float>(raw_ptr, raw_ptr + type.components());
+            } else if (type.is_boolean()) {
+                bool* raw_ptr = static_cast<bool*>(shmValue);
+                // convert to a uint32_t vector, that's how the reshade uniform code understands booleans
+                std::vector<uint32_t> bools_as_uint;
+                for(size_t i = 0; i < type.components(); ++i) {
+                    bools_as_uint.push_back(static_cast<uint32_t>(raw_ptr[i]));
                 }
-            } else {
-                shmError = true;
+                value = bools_as_uint;
+            } else if (type.is_numeric()) {
+                if (type.is_signed()) {
+                    int32_t* raw_ptr = static_cast<int32_t*>(shmValue);
+                    value = std::vector<int32_t>(raw_ptr, raw_ptr + type.components());
+                } else {
+                    uint32_t* raw_ptr = static_cast<uint32_t*>(shmValue);
+                    value = std::vector<uint32_t>(raw_ptr, raw_ptr + type.components());
+                }
             }
-        } else {
-            shmError = true;
         }
-
-        // try refreshing the key
-        if (shmError)
-            shmKey = ftok(pathname, projId);
 
         if (std::holds_alternative<std::monostate>(value)) {
             value = defaultValue;
         }
+
         if (std::holds_alternative<std::vector<float>>(value)) {
             std::vector<float>& vec = std::get<std::vector<float>>(value);
             std::memcpy((uint8_t*) mapedBuffer + offset, vec.data(), vec.size() * sizeof(float));

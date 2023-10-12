@@ -163,9 +163,7 @@ namespace vkBasalt
     private:
         reshadefx::type type;
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> defaultValue;
-        char* pathname;
-        int projId;
-        key_t shmKey;
+        void* shmValue;
     };
 } // namespace vkBasalt
 
