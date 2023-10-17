@@ -50,7 +50,9 @@ namespace vkBasalt
         virtual ~AverageFrameTimeUniform();
 
     private:
-        std::queue<std::chrono::time_point<std::chrono::high_resolution_clock>> frametimes;
+        std::queue<float> frametimes;
+        std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame;
+        float runningTotal;
     };
 
     class FrameCountUniform : public ReshadeUniform

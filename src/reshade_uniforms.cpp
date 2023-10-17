@@ -12,6 +12,8 @@
 #include "logger.hpp"
 
 const std::string defaultRuntimePathnamePrefix = "/tmp/shader_runtime_";
+const float smoothedAverageChangePercentLimit = 1.05;
+const float smoothedAverageBufferSize = 25;
 
 namespace vkBasalt
 {
@@ -124,21 +126,36 @@ namespace vkBasalt
         {
             Logger::err("Tried to create a AverageFrameTimeUniform from a non averageframetime uniform_info");
         }
-        frametimes.push(std::chrono::high_resolution_clock::now());
-        offset    = uniformInfo.offset;
-        size      = uniformInfo.size;
+        lastFrame       = std::chrono::high_resolution_clock::now();
+        runningTotal    = 0.0;
+        offset          = uniformInfo.offset;
+        size            = uniformInfo.size;
     }
     void AverageFrameTimeUniform::update(void* mapedBuffer)
     {
         auto currentFrame = std::chrono::high_resolution_clock::now();
-        frametimes.push(currentFrame);
-        std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame = frametimes.front();
-        if (frametimes.size() > 100) {
+        std::chrono::duration<float, std::milli> duration = currentFrame - lastFrame;
+        float durationMillis = duration.count();
+        float average = durationMillis;
+
+        // if we've filled the buffer, make sure the newest duration can't go past the limit
+        if (frametimes.size() > smoothedAverageBufferSize) {
+            average = runningTotal / frametimes.size();
+            float changeMin = average / smoothedAverageChangePercentLimit;
+            float changeMax = average * smoothedAverageChangePercentLimit;
+
+            durationMillis = std::max(changeMin, std::min(durationMillis, changeMax));
+        }
+        runningTotal += durationMillis;
+        frametimes.push(durationMillis);
+        if (frametimes.size() > smoothedAverageBufferSize) {
+            runningTotal -= frametimes.front();
             frametimes.pop();
         }
-        std::chrono::duration<float, std::milli> duration     = currentFrame - lastFrame;
-        float frametime                                       = duration.count() / frametimes.size();
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(frametime), sizeof(float));
+        average = runningTotal / frametimes.size();
+        std::memcpy((uint8_t*) mapedBuffer + offset, &(average), sizeof(float));
+
+        lastFrame       = std::chrono::high_resolution_clock::now();
     }
     AverageFrameTimeUniform::~AverageFrameTimeUniform()
     {
@@ -452,7 +469,7 @@ namespace vkBasalt
             projId = projIdAnnotation->value.as_int[0];
         }
         key_t shmKey = ftok(pathname, projId);
-        int shmId = shmget(shmKey,type.is_boolean() ? sizeof(bool) : size, 0444|IPC_CREAT);
+        int shmId = shmget(shmKey,type.is_boolean() ? sizeof(bool) : size, 0666|IPC_CREAT);
         shmValue = NULL;
         if (shmId != -1) {
             shmValue = shmat(shmId, nullptr, 0);
