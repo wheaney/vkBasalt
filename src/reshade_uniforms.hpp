@@ -166,6 +166,7 @@ namespace vkBasalt
         reshadefx::type type;
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> defaultValue;
         void* shmValue;
+        pthread_mutex_t* mutex;
     };
 } // namespace vkBasalt
 

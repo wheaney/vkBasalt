@@ -4,7 +4,10 @@
 #include <ctime>
 #include <cstdlib>
 #include <cmath>
+#include <pthread.h>
+#include <sys/ipc.h>
 #include <sys/shm.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <variant>
@@ -12,6 +15,7 @@
 #include "logger.hpp"
 
 const std::string defaultRuntimePathnamePrefix = "/tmp/shader_runtime_";
+const std::string mutexPathnameSuffix = "_mutex";
 const float smoothedAverageChangePercentLimit = 1.05;
 const float smoothedAverageBufferSize = 25;
 
@@ -446,6 +450,7 @@ namespace vkBasalt
         type   = uniformInfo.type;
 
         char* pathname;
+        char* mutexPathname = NULL;
         auto source = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; });
         if (auto pathnameAnnotation =
                 std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "pathname"; });
@@ -459,6 +464,10 @@ namespace vkBasalt
             pathname = new char[defaultRuntimePathnamePrefix.length() + source->value.string_data.length() + 1];
             std::string tmp_pathname = defaultRuntimePathnamePrefix + source->value.string_data;
             strcpy(pathname, tmp_pathname.c_str());
+
+            mutexPathname = new char[defaultRuntimePathnamePrefix.length() + source->value.string_data.length() + mutexPathnameSuffix.length() + 1];
+            std::string tmp_mutexPathname = defaultRuntimePathnamePrefix + source->value.string_data + mutexPathnameSuffix;
+            strcpy(mutexPathname, tmp_mutexPathname.c_str());
         }
 
         int projId = 0;
@@ -480,6 +489,23 @@ namespace vkBasalt
             }
         } else {
             Logger::debug(std::string("Error with shmget for path ") + pathname + "\n");
+        }
+
+        if (mutexPathname != NULL) {
+            key_t mutexKey = ftok(mutexPathname, projId);
+            int mutexId = shmget(mutexKey, sizeof(pthread_mutex_t), 0444);
+            mutex = NULL;
+            if (mutexId != -1) {
+                mutex = (pthread_mutex_t*) shmat(mutexId, nullptr, 0);
+                if (mutex == (void *) -1) {
+                    mutex = NULL;
+                    Logger::debug(std::string("No shared memory defined (shmat failed) for path ") + mutexPathname + "\n");
+                } else {
+                    Logger::debug("Got key " + std::to_string(mutexKey) + " for path " + mutexPathname + "\n");
+                }
+            } else {
+                Logger::debug(std::string("No shared memory defined (shmget failed) for path ") + mutexPathname + "\n");
+            }
         }
 
         if (auto defaultValueAnnotation =
@@ -512,6 +538,8 @@ namespace vkBasalt
     }
     void RuntimeUniform::update(void* mapedBuffer)
     {
+        if (mutex) pthread_mutex_lock(mutex);
+
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> value;
         if (shmValue != NULL && shmValue != (void *) -1) {
             if (type.is_floating_point()) {
@@ -535,6 +563,8 @@ namespace vkBasalt
                 }
             }
         }
+
+        if (mutex) pthread_mutex_unlock(mutex);
 
         if (std::holds_alternative<std::monostate>(value)) {
             value = defaultValue;
