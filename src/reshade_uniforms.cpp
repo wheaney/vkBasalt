@@ -16,8 +16,6 @@
 
 const std::string defaultRuntimePathnamePrefix = "/tmp/shader_runtime_";
 const std::string mutexPathnameSuffix = "_mutex";
-const float smoothedAverageChangePercentLimit = 1.05;
-const float smoothedAverageBufferSize = 25;
 
 namespace vkBasalt
 {
@@ -45,10 +43,6 @@ namespace vkBasalt
             if (source == "frametime")
             {
                 uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameTimeUniform(uniform)));
-            }
-            else if (source == "averageframetime")
-            {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new AverageFrameTimeUniform(uniform)));
             }
             else if (source == "framecount")
             {
@@ -119,49 +113,6 @@ namespace vkBasalt
         std::memcpy((uint8_t*) mapedBuffer + offset, &(frametime), sizeof(float));
     }
     FrameTimeUniform::~FrameTimeUniform()
-    {
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////
-    AverageFrameTimeUniform::AverageFrameTimeUniform(reshadefx::uniform_info uniformInfo)
-    {
-        auto source = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; });
-        if (source->value.string_data != "averageframetime")
-        {
-            Logger::err("Tried to create a AverageFrameTimeUniform from a non averageframetime uniform_info");
-        }
-        lastFrame       = std::chrono::high_resolution_clock::now();
-        runningTotal    = 0.0;
-        offset          = uniformInfo.offset;
-        size            = uniformInfo.size;
-    }
-    void AverageFrameTimeUniform::update(void* mapedBuffer)
-    {
-        auto currentFrame = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> duration = currentFrame - lastFrame;
-        float durationMillis = duration.count();
-        float average = durationMillis;
-
-        // if we've filled the buffer, make sure the newest duration can't go past the limit
-        if (frametimes.size() > smoothedAverageBufferSize) {
-            average = runningTotal / frametimes.size();
-            float changeMin = average / smoothedAverageChangePercentLimit;
-            float changeMax = average * smoothedAverageChangePercentLimit;
-
-            durationMillis = std::max(changeMin, std::min(durationMillis, changeMax));
-        }
-        runningTotal += durationMillis;
-        frametimes.push(durationMillis);
-        if (frametimes.size() > smoothedAverageBufferSize) {
-            runningTotal -= frametimes.front();
-            frametimes.pop();
-        }
-        average = runningTotal / frametimes.size();
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(average), sizeof(float));
-
-        lastFrame       = std::chrono::high_resolution_clock::now();
-    }
-    AverageFrameTimeUniform::~AverageFrameTimeUniform()
     {
     }
 
@@ -469,6 +420,7 @@ namespace vkBasalt
             std::string tmp_mutexPathname = defaultRuntimePathnamePrefix + source->value.string_data + mutexPathnameSuffix;
             strcpy(mutexPathname, tmp_mutexPathname.c_str());
         }
+        name = source->value.string_data;
 
         int projId = 0;
         if (auto projIdAnnotation =
@@ -560,7 +512,28 @@ namespace vkBasalt
                 } else {
                     uint32_t* raw_ptr = static_cast<uint32_t*>(shmValue);
                     value = std::vector<uint32_t>(raw_ptr, raw_ptr + type.components());
+
+                    /**
+                     * Since this vkBasalt fork will never be merged back into vkBasalt, we'll put this XRLinuxDriver-specific
+                     * logic here that should improve look-ahead accuracy.
+                     * 
+                     * When the driver sends a timestamp, we'll compute the age of the data by taking the difference
+                     * from the current time (at the time of rendering). This allows us to avoid looking at frametime at all.
+                     **/
+                    if (name == "timestamp_ms") {
+                        uint64_t ts_imu = static_cast<uint64_t>(std::get<std::vector<uint32_t>>(value)[1]) << 32;
+                        ts_imu |= std::get<std::vector<uint32_t>>(value)[0];
+
+                        auto now = std::chrono::system_clock::now();
+                        auto duration = now.time_since_epoch();
+
+                        uint64_t ts_now = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                        uint32_t ts_diff = ts_now - ts_imu;
+
+                        value = std::vector<uint32_t>{ts_diff, 0};
+                    }
                 }
+
             }
         }
 

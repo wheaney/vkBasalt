@@ -42,19 +42,6 @@ namespace vkBasalt
         std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame;
     };
 
-    class AverageFrameTimeUniform : public ReshadeUniform
-    {
-    public:
-        AverageFrameTimeUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
-        virtual ~AverageFrameTimeUniform();
-
-    private:
-        std::queue<float> frametimes;
-        std::chrono::time_point<std::chrono::high_resolution_clock> lastFrame;
-        float runningTotal;
-    };
-
     class FrameCountUniform : public ReshadeUniform
     {
     public:
@@ -164,6 +151,7 @@ namespace vkBasalt
 
     private:
         reshadefx::type type;
+        std::string name;
         std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>, bool> defaultValue;
         void* shmValue;
         pthread_mutex_t* mutex;
