@@ -1,0 +1,21 @@
+# Debian bookworm matches Raspberry Pi OS (64-bit) and other common aarch64 distros
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
+
+ARG TARGETPLATFORM
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    glslang-tools \
+    libx11-dev \
+    spirv-headers \
+    libvulkan-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workdir
+ADD . /workdir
+
+ENTRYPOINT [ "/docker/build" ]

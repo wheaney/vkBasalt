@@ -36,7 +36,7 @@ cd vkBasalt
 
 #### Docker
 
-If you have Docker installed on your system, you can kick off the Docker build using: `./docker-build`. This will run both the 32 and 64-bit builds, and copy the results to the `out` directory.
+If you have Docker installed on your system, you can kick off the Docker build using: `./docker-build`. This will run the x86_64 (32 and 64-bit) and aarch64 (64-bit only) builds and copy the results to the `out` directory (`out/x86_64/` and `out/aarch64/`, each containing `builddir` and, for x86_64 only, `builddir.32`). Use `./docker-build x86_64` or `./docker-build aarch64` to build just one; aarch64 on an x86 host needs qemu binfmt support.
 
 If you don't have Docker installed or prefer not to use it, see the following sections.
 

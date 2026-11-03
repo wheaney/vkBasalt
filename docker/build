@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -e
 
-rm -rf /out/*
+ARCH=${ARCH:-$(uname -m)}
+
+rm -rf /out/$ARCH
+mkdir -p /out/$ARCH
 
 meson setup --buildtype=release --prefix=/usr builddir
 ninja -C builddir
-cp -r builddir /out/
+cp -r builddir /out/$ARCH/builddir
 
-ASFLAGS=--32 CFLAGS=-m32 CXXFLAGS=-m32 PKG_CONFIG_PATH=/usr/lib32/pkgconfig meson setup --prefix=/usr --buildtype=release --libdir=lib32 -Dwith_json=false builddir.32
-ninja -C builddir.32
-cp -r builddir.32 /out/
+# 32-bit builds are only supported on x86_64
+if [[ "$ARCH" == "x86_64" ]]; then
+    ASFLAGS=--32 CFLAGS=-m32 CXXFLAGS=-m32 PKG_CONFIG_PATH=/usr/lib32/pkgconfig meson setup --prefix=/usr --buildtype=release --libdir=lib32 -Dwith_json=false builddir.32
+    ninja -C builddir.32
+    cp -r builddir.32 /out/$ARCH/builddir.32
+fi
